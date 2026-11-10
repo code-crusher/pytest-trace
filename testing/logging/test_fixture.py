@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import logging
+import threading
 
 from _pytest.logging import caplog_records_key
 from _pytest.pytester import Pytester
@@ -470,6 +471,48 @@ def test_can_capture_non_propagating_logger(pytester: Pytester) -> None:
 
     result = pytester.runpytest()
     result.assert_outcomes(passed=1)
+
+
+def test_catching_logs_survives_concurrent_logger_registration() -> None:
+    """``catching_logs`` must not crash when another thread registers a logger
+    while it iterates the logger registry (#15237)."""
+    from _pytest.logging import catching_logs
+
+    mutation_completed = threading.Event()
+    worker = None
+
+    class TriggerLogger(logging.Logger):
+        """Logger whose ``propagate`` property registers a logger from
+        another thread when read."""
+
+        @property
+        def propagate(self) -> bool:
+            global worker
+
+            def register_logger() -> None:
+                logging.getLogger("catching-logs.concurrent-registration")
+                mutation_completed.set()
+
+            worker = threading.Thread(target=register_logger)
+            worker.start()
+            assert mutation_completed.wait(timeout=5)
+            return True
+
+        @propagate.setter
+        def propagate(self, value: bool) -> None:
+            pass
+
+    manager = logging.getLogger().manager
+    trigger = TriggerLogger("catching-logs.trigger")
+    manager.loggerDict[trigger.name] = trigger
+    try:
+        with catching_logs(logging.NullHandler()):
+            pass
+    finally:
+        if worker is not None:
+            worker.join(timeout=5)
+        del manager.loggerDict[trigger.name]
+        manager.loggerDict.pop("catching-logs.concurrent-registration", None)
 
 
 def test_captures_despite_exception(pytester: Pytester) -> None:

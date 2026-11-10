@@ -1,0 +1,1 @@
+Fixed a ``RuntimeError: dictionary changed size during iteration`` which could occur when another thread registered a logger while pytest was setting up log capturing.
