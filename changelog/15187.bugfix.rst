@@ -1,0 +1,1 @@
+Collection is no longer quadratic when many files from the same directory are passed as separate arguments: the parent directory is now collected only once instead of once per file argument.

@@ -2390,6 +2390,77 @@ class TestOverlappingCollectionArguments:
             consecutive=True,
         )
 
+    def test_file_arguments_from_same_directory_reuse_collection(
+        self, pytester: Pytester
+    ) -> None:
+        """Files from the same directory must not re-collect that directory.
+
+        Regression test for #15187: passing N files of one directory as N
+        arguments used to collect the parent directory N times, offering every
+        entry to the collect hooks each time (quadratic).
+        """
+        pytester.makepyfile(
+            **{
+                f"tests/test_{i}.py": f"def test_{i}(): pass\n" for i in range(3)
+            }
+        )
+        pytester.makeconftest(
+            """
+            calls = []
+
+            def pytest_collect_file(file_path, parent):
+                calls.append(file_path.name)
+
+            def pytest_collection_finish(session):
+                print("TEST_FILE_CALLS:", sum(n.startswith("test_") for n in calls))
+            """
+        )
+
+        result = pytester.runpytest(
+            "--collect-only", "tests/test_0.py", "tests/test_1.py", "tests/test_2.py"
+        )
+        result.stdout.fnmatch_lines(
+            [
+                "*TEST_FILE_CALLS: 3",
+                "*3 tests collected*",
+            ]
+        )
+
+    def test_keep_duplicates_recollects_directory(self, pytester: Pytester) -> None:
+        """With --keep-duplicates a file given twice gets two Module nodes.
+
+        Re-collecting the parent directory is what provides the fresh File
+        nodes, so the directory cache must stay off in that mode (#15187).
+        """
+        pytester.makepyfile(
+            test_mod="""
+                events = []
+
+                def setup_module():
+                    events.append("setup")
+
+                def teardown_module():
+                    events.append("teardown")
+
+                def test_it():
+                    pass
+            """
+        )
+        pytester.makeconftest(
+            """
+            def pytest_sessionfinish(session):
+                import test_mod
+                print("EVENTS:", test_mod.events)
+            """
+        )
+
+        result = pytester.runpytest(
+            "--keep-duplicates", "-s", "test_mod.py", "test_mod.py"
+        )
+        result.stdout.fnmatch_lines(
+            ["*EVENTS: *setup*teardown*setup*teardown*", "*2 passed*"]
+        )
+
     def test_overlapping_with_parametrization(self, pytester: Pytester) -> None:
         """Test overlapping with parametrized tests."""
         pytester.makepyfile(

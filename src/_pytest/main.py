@@ -992,8 +992,16 @@ class Session(nodes.Collector):
                 else:
                     # For backward compat, files given directly multiple
                     # times on the command line should not be deduplicated.
+                    # This requires re-collecting the file's parent directory
+                    # so that each occurrence gets fresh File nodes, which is
+                    # only necessary with --keep-duplicates (without it,
+                    # duplicate arguments are already removed by
+                    # normalize_collection_arguments). Otherwise dedupe the
+                    # directory: many file arguments from the same directory
+                    # must not re-collect it once per file (#15187).
                     handle_dupes = not (
-                        len(matchparts) == 1
+                        self.config.getoption("keepduplicates")
+                        and len(matchparts) == 1
                         and isinstance(matchparts[0], Path)
                         and matchparts[0].is_file()
                     )
