@@ -1,0 +1,1 @@
+``pytest.FixtureRequest`` is now generic in the type of ``request.node`` and ``request.param``, so fixtures can annotate them precisely, for example ``request: pytest.FixtureRequest[pytest.Function, int]``. Bare ``pytest.FixtureRequest`` continues to type both attributes as ``Any``, so existing annotations are unaffected.

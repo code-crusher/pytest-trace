@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import textwrap
+import typing
 
 from _pytest.compat import getfuncargnames
 from _pytest.config import ExitCode
@@ -827,6 +828,50 @@ class TestRequestBasic:
         req = item._request
         assert req.cls.__name__ == "TestB"
         assert req.instance.__class__ == req.cls
+
+    def test_fixture_request_type_subscript(self) -> None:
+        """Subscripting pytest.FixtureRequest at runtime (#15232).
+
+        Bare ``FixtureRequest`` is unchanged, and the class can be
+        parameterized with one (node type) or two (node and param types)
+        arguments. No ``from __future__ import annotations`` required.
+        """
+        assert (
+            pytest.FixtureRequest[pytest.Session]
+            == pytest.FixtureRequest[pytest.Session, typing.Any]
+        )
+        assert pytest.FixtureRequest[pytest.Function, int] is not None
+        # Type arguments are not validated at runtime.
+        assert pytest.FixtureRequest[int] is not None  # type: ignore[type-var]
+        # Too many arguments are rejected, same as before.
+        with pytest.raises(TypeError, match="Too many arguments"):
+            pytest.FixtureRequest[pytest.Session, int, str]  # type: ignore[misc]
+
+    def test_fixture_request_annotated_fixture(self, pytester: Pytester) -> None:
+        """Fixtures annotated with a parameterized request type work (#15232).
+
+        The annotation is only the user's assertion and must not interfere
+        with fixture setup at runtime.
+        """
+        pytester.makepyfile(
+            """
+            import pytest
+
+            @pytest.fixture(scope="session")
+            def static_config(request: pytest.FixtureRequest[pytest.Session]):
+                return request.node
+
+            @pytest.fixture(params=[1, 2])
+            def numbered(request: pytest.FixtureRequest[pytest.Function, int]):
+                return request.param
+
+            def test_func(static_config, numbered):
+                assert isinstance(static_config, pytest.Session)
+                assert numbered in (1, 2)
+        """
+        )
+        result = pytester.runpytest()
+        result.assert_outcomes(passed=2)
 
     def test_request_contains_funcarg_arg2fixturedefs(self, pytester: Pytester) -> None:
         modcol = pytester.getmodulecol(

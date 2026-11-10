@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import sys
 import types
+import typing
 from typing import Any
 from typing import cast
 from typing import Final
@@ -29,7 +30,6 @@ from typing import Literal
 from typing import NoReturn
 from typing import overload
 from typing import TYPE_CHECKING
-from typing import TypeVar
 import warnings
 
 import _pytest
@@ -84,14 +84,33 @@ if sys.version_info < (3, 11):
 
 
 if TYPE_CHECKING:
+    # For type checkers, use typing_extensions.TypeVar which supports
+    # TypeVar defaults (PEP 696) on all Python versions we check against.
+    # This is the same conditional-import trick used in _pytest/raises.py.
+    from typing_extensions import TypeVar as TypeVar
+
     from _pytest.python import CallSpec
     from _pytest.python import Function
     from _pytest.python import Metafunc
     from _pytest.reports import CollectReport
+else:
+    from typing import TypeVar
+
+    if sys.version_info < (3, 13):
+        # Stdlib TypeVar does not support defaults (PEP 696) before Python
+        # 3.13. At runtime the defaults are unobservable: missing parameters
+        # in `FixtureRequest[X]` are filled in by
+        # `FixtureRequest.__class_getitem__`, so a plain TypeVar suffices.
+        def TypeVar(name: str, *, default: object = None, **kwargs: object) -> Any:
+            return typing.TypeVar(name, **kwargs)  # type: ignore[arg-type]
 
 
 # The value of the fixture -- return/yield of the fixture function (type variable).
 FixtureValue = TypeVar("FixtureValue", covariant=True)
+# The type of `FixtureRequest.node` (see the `node` property for details).
+NodeT = TypeVar("NodeT", bound=nodes.Node, default=Any, covariant=True)
+# The type of `FixtureRequest.param` (see `FixtureRequest.param` for details).
+ParamT = TypeVar("ParamT", default=Any)
 # The type of the fixture function (type alias).
 FixtureFunction = Callable[..., object]
 # The type of a fixture function (type alias generic in fixture value).
@@ -498,11 +517,29 @@ class FuncFixtureInfo:
         self.names_closure[:] = (name for name in self.names_closure if name in closure)
 
 
-class FixtureRequest(abc.ABC):
+class FixtureRequest(abc.ABC, Generic[NodeT, ParamT]):
     """The type of the ``request`` fixture.
 
     A request object gives access to the requesting test context and has a
     ``param`` attribute in case the fixture is parametrized.
+
+    The class is generic in the type of the underlying node
+    (:attr:`node`) and the type of :attr:`param`. Both type parameters
+    default to ``Any``, so bare ``FixtureRequest`` is equivalent to the
+    unparameterized typing of previous pytest versions. Explicit
+    parameters are the user's assertion of the runtime types, checked
+    statically but not enforced at runtime::
+
+        @pytest.fixture(scope="session")
+        def my_fixture(request: pytest.FixtureRequest[pytest.Session]) -> None:
+            assert request.config
+
+    Note that the type parameters are not verified against the fixture's
+    ``scope=`` and ``params=`` -- matching them is up to the user.
+
+    .. versionadded:: 9.1
+        ``FixtureRequest`` is now generic; the ``node`` and ``param`` types
+        can be specified using type parameters.
     """
 
     def __init__(
@@ -531,9 +568,22 @@ class FixtureRequest(abc.ABC):
         #   this cannot be reflected in the type.
         # - Technically `param` is only (possibly) defined on SubRequest, not
         #   FixtureRequest, but the typing of that is still in flux so this cheats.
-        # - In the future we might consider using a generic for the param type, but
-        #   for now just using Any.
-        self.param: Any
+        # - The param type can be narrowed by parameterizing the request type
+        #   (e.g. ``pytest.FixtureRequest[pytest.Session, int]``); it is the user's
+        #   assertion, not checked at runtime. The default is Any for backward
+        #   compatibility.
+        self.param: ParamT
+
+    def __class_getitem__(cls, item: object) -> Any:
+        # Support ``FixtureRequest[X]`` (single type argument) at runtime.
+        # Type checkers apply the PEP 696 TypeVar defaults on their own, but
+        # at runtime the TypeVars used here have no defaults on Python <
+        # 3.13, so pad the missing argument and delegate to Generic, which
+        # does not formally declare __class_getitem__ (it is added
+        # dynamically), hence the ignore.
+        if not isinstance(item, tuple):
+            item = (item, Any)
+        return super().__class_getitem__(item)  # type: ignore[misc]
 
     @property
     def _fixturemanager(self) -> FixtureManager:
@@ -564,18 +614,17 @@ class FixtureRequest(abc.ABC):
         result.extend(set(self._fixture_defs).difference(result))
         return result
 
-    # The return type is intentionally ``Any``.
-    # The concrete node type depends on the request scope, so the only correct
-    # annotation would be a broad one (``Item | Collector``). That would force
-    # users to ``assert isinstance(...)`` or ``cast`` whenever they know the
-    # actual type (e.g. ``request.node.function`` in a function-scoped
-    # fixture), so we trade type safety for convenience here.
-    # It is spelled out explicitly because pyright in strict mode reports an
-    # unannotated return as ``Unknown`` rather than ``Any``.
-    # See https://github.com/pytest-dev/pytest/issues/13888#issuecomment-3511168937.
+    # The concrete node type depends on the request scope, so the type
+    # parameter defaults to ``Any`` -- bare ``FixtureRequest`` keeps the
+    # behavior of previous pytest versions, and parameterizing the class
+    # (e.g. ``pytest.FixtureRequest[pytest.Session]``) narrows this property
+    # to the asserted node type. The type parameters are the user's
+    # assertion; they are not checked against the fixture's ``scope=``
+    # statically or at runtime. See #15232 and the discussion at
+    # https://github.com/pytest-dev/pytest/issues/13888#issuecomment-3511168937.
     @property
     @abc.abstractmethod
-    def node(self) -> Any:
+    def node(self) -> NodeT:
         """Underlying collection node (depends on current request scope)."""
         raise NotImplementedError()
 

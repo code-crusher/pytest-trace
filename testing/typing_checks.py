@@ -8,6 +8,7 @@ none of the code triggers any mypy errors.
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 from typing import Literal
 
 from typing_extensions import assert_type
@@ -78,3 +79,28 @@ def check_scope_typing() -> None:
 @pytest.mark.parametrize("x", [ImportError, AttributeError])
 def check_mypy_bug_with_argvalues(x) -> None:
     pass
+
+
+# Issue #15232.
+@pytest.fixture
+def check_fixture_request_bare(request: pytest.FixtureRequest) -> None:
+    assert_type(request.node, Any)
+    assert_type(request.param, Any)
+
+
+# Issue #15232.
+@pytest.fixture
+def check_fixture_request_node_type(
+    request: pytest.FixtureRequest[pytest.Session],
+) -> None:
+    assert_type(request.node, pytest.Session)
+    assert_type(request.param, Any)
+
+
+# Issue #15232.
+@pytest.fixture
+def check_fixture_request_node_and_param_types(
+    request: pytest.FixtureRequest[pytest.Function, int],
+) -> None:
+    assert_type(request.node, pytest.Function)
+    assert_type(request.param, int)
