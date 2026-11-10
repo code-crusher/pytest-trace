@@ -990,12 +990,25 @@ class Session(nodes.Collector):
                     assert isinstance(matchparts[0], Path)
                     subnodes = matchnode._collect_path(matchparts[0], path_cache)
                 else:
-                    # For backward compat, files given directly multiple
-                    # times on the command line should not be deduplicated.
-                    handle_dupes = not (
+                    is_file_arg = (
                         len(matchparts) == 1
                         and isinstance(matchparts[0], Path)
                         and matchparts[0].is_file()
+                    )
+                    # For backward compat, files given directly multiple
+                    # times on the command line should not be deduplicated.
+                    # Only the file itself needs to bypass the cache: its
+                    # parent directory can still be cached, otherwise it is
+                    # re-collected once per file argument, making collection
+                    # quadratic (#15187). Under --keep-duplicates the
+                    # re-collection is what creates a separate collector per
+                    # occurrence, so it is kept there.
+                    handle_dupes = (
+                        not is_file_arg
+                        or (
+                            isinstance(matchnode, nodes.Directory)
+                            and not self.config.getoption("keepduplicates")
+                        )
                     )
                     rep, duplicate = self._collect_one_node(matchnode, handle_dupes)
                     if not duplicate and not rep.passed:

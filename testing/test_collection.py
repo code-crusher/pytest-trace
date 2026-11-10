@@ -2715,6 +2715,63 @@ class TestOverlappingCollectionArguments:
             consecutive=True,
         )
 
+    def test_files_from_same_directory_are_not_recollected(
+        self, pytester: Pytester
+    ) -> None:
+        """Each file argument must not re-collect its parent directory (#15187)."""
+        pytester.makeconftest(
+            """
+            import collections
+
+            calls = collections.Counter()
+
+            def pytest_collect_file(file_path, parent):
+                calls[file_path.name] += 1
+
+            def pytest_collection_finish(session):
+                test_calls = sorted(
+                    (name, count)
+                    for name, count in calls.items()
+                    if name.startswith("test_")
+                )
+                print("COLLECT_FILE_CALLS", test_calls)
+            """
+        )
+        for i in range(5):
+            pytester.makepyfile(**{f"tests/test_{i}.py": "def test_it(): pass"})
+
+        result = pytester.runpytest(
+            "--collect-only", *[f"tests/test_{i}.py" for i in range(5)]
+        )
+
+        # One call per file: the parent directory is collected only once.
+        result.stdout.fnmatch_lines(
+            ["COLLECT_FILE_CALLS " + repr([(f"test_{i}.py", 1) for i in range(5)])]
+        )
+        result.stdout.fnmatch_lines(["collected 5 items"])
+
+    def test_keep_duplicates_runs_file_twice(self, pytester: Pytester) -> None:
+        """A file given twice under --keep-duplicates still gets two separate
+        module setup/teardown cycles (#15187)."""
+        pytester.makepyfile(
+            test_dup="""
+                def setup_module():
+                    print("SETUP")
+
+                def teardown_module():
+                    print("TEARDOWN")
+
+                def test_it(): pass
+            """
+        )
+
+        result = pytester.runpytest(
+            "-q", "-s", "--keep-duplicates", "test_dup.py", "test_dup.py"
+        )
+
+        result.stdout.fnmatch_lines(["SETUP", ".TEARDOWN", "SETUP", ".TEARDOWN"])
+        result.assert_outcomes(passed=2)
+
 
 @pytest.mark.parametrize(
     ["x_y", "expected_duplicates"],

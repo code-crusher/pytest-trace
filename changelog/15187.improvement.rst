@@ -1,0 +1,1 @@
+Collection of multiple file arguments from the same directory is no longer quadratic: the parent directory is now collected once and its result reused, instead of being re-collected for every file argument. The number of ``pytest_collect_file``/``pytest_ignore_collect`` calls no longer scales with the number of files passed.
