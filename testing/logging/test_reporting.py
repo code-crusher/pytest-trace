@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
+import threading
 from typing import cast
 
 from _pytest.capture import CaptureManager
 from _pytest.config import ExitCode
 from _pytest.fixtures import FixtureRequest
+from _pytest.logging import catching_logs
 from _pytest.pytester import Pytester
 from _pytest.terminal import TerminalReporter
 import pytest
@@ -1332,6 +1335,45 @@ def test_log_propagation_false(pytester: Pytester) -> None:
         ]
     )
     assert not list(report.get_sections("Captured stderr call"))
+
+
+def test_catching_logs_logger_registry_mutation_during_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent logger registration must not crash log capture setup (#15237).
+
+    The `propagate` property of the trigger logger spawns a thread which
+    mutates the logger registry (a plain ``logging.getLogger()`` call) while
+    `catching_logs.__enter__` is iterating over it -- previously this raised
+    ``RuntimeError: dictionary changed size during iteration``.
+    """
+    mutation_done = threading.Event()
+
+    class TriggerLogger(logging.Logger):
+        @property
+        def propagate(self) -> bool:
+            threading.Thread(
+                target=lambda: (
+                    logging.getLogger("repro.concurrent-registration"),
+                    mutation_done.set(),
+                )
+            ).start()
+            assert mutation_done.wait(timeout=10)
+            return True
+
+        @propagate.setter
+        def propagate(self, value: bool) -> None:
+            pass
+
+    trigger = TriggerLogger("repro.trigger")
+    monkeypatch.setitem(logging.root.manager.loggerDict, "repro.trigger", trigger)
+    try:
+        with catching_logs(logging.NullHandler()):
+            pass
+    finally:
+        # Ensure the spawned thread has finished before it gets garbage
+        # collected, otherwise it may print an unraisable exception.
+        assert mutation_done.wait(timeout=10)
 
 
 def test_colored_ansi_esc_caplogtext(pytester: Pytester) -> None:

@@ -1,0 +1,1 @@
+Fixed a ``RuntimeError: dictionary changed size during iteration`` in log capture setup when another thread registers a logger while a test session configures logging -- regressed in pytest 9.1.
