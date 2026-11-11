@@ -1,0 +1,4 @@
+Fixed a bug where the ``faulthandler_timeout`` timer was cancelled on any test
+failure, so fixture teardown (and the rest of a test using ``subtests``) ran
+without timeout coverage. The timer is now only cancelled when actually
+entering the debugger (``--pdb`` or ``breakpoint()``).
