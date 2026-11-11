@@ -1,0 +1,1 @@
+Fixed ``faulthandler_timeout`` no longer dumping tracebacks (or exiting, with ``faulthandler_exit_on_timeout``) when a hang occurs after a test failure — the timer was cancelled on any failing setup/call/teardown, not just when entering pdb.
